@@ -20,7 +20,19 @@ DOTS = ((1, 8), (2, 16), (4, 32), (64, 128))
 
 
 def options():
-    parser = argparse.ArgumentParser(prog="rainbow-bonsai", description=__doc__, add_help=False)
+    parser = argparse.ArgumentParser(
+        prog="rainbow-bonsai", description=__doc__, add_help=False,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples
+  Grow a large pink tree with star-shaped blossoms.
+    rainbow-bonsai --large --theme sakura --leaves blossom
+
+  Fill the window with trees rooted in soil, pausing 10 seconds between trees.
+    rainbow-bonsai --huge --dirt --infinite --wait 10
+
+  Repeat the same tree with ocean colors that cycle every 16 seconds.
+    rainbow-bonsai --seed 42 --theme ocean --cycle 16""",
+    )
     parser.add_argument("-h", "-help", "--help", action="help", help="show all options and exit")
     sizes = parser.add_mutually_exclusive_group()
     sizes.add_argument("--large", action="store_true", help="grow a larger bonsai")

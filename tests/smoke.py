@@ -65,4 +65,8 @@ def live(flags, loop=False):
 live([])
 live(['--large','--theme','ocean','--leaves','needle','--cycle','4','--no-pot','--dirt','--seed','19'])
 live(['--huge','--dirt','--infinite','--theme','sakura','--wait','0'],True)
+examples = re.findall(r"^    rainbow-bonsai (.+)$", help_text.decode(), re.MULTILINE)
+assert len(examples) >= 3
+for flags in examples:
+    live(flags.split())
 print('Live terminal growth, resize, looping, keypress and screen restoration passed')
