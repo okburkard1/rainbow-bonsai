@@ -4,6 +4,16 @@ Grow a color-cycling bonsai in your terminal. A tapered trunk branches into five
 
 ## Install
 
+With Homebrew on macOS or Linux:
+
+```sh
+brew install okburkard1/tap/rainbow-bonsai
+```
+
+Homebrew installs Python for you. To update later, run `brew update` followed by `brew upgrade rainbow-bonsai`.
+
+### Manual installation
+
 Use Python 3.8 or newer and a Unix terminal. Ghostty supports the palette updates that animate the colors. The script uses the Python standard library.
 
 ```sh
