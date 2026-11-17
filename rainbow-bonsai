@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""Grow a rainbow bonsai in the terminal. Press q to quit."""
+
+import argparse
+import colorsys
+import math
+import os
+import random
+import select
+import sys
+import termios
+import time
+import tty
+
+STEP = 0.03
+THEMES = {"rainbow": None, "autumn": (0.055, 0.065), "ocean": (0.55, 0.09),
+          "sakura": (0.94, 0.055)}
+LEAVES = {"classic": "&", "blossom": "*", "round": "●", "needle": "˄"}
+DOTS = ((1, 8), (2, 16), (4, 32), (64, 128))
+
+
+def options():
+    parser = argparse.ArgumentParser(prog="rainbow-bonsai", description=__doc__)
+    sizes = parser.add_mutually_exclusive_group()
+    sizes.add_argument("--large", action="store_true", help="grow a larger bonsai")
+    sizes.add_argument("--huge", action="store_true", help="fit the tree to the terminal")
+    parser.add_argument("--infinite", action="store_true", help="grow successive trees")
+    parser.add_argument("--seed", type=int, help="repeat a tree or sequence of trees")
+    parser.add_argument("--theme", choices=THEMES, default="rainbow")
+    parser.add_argument("--cycle", type=float, default=8, metavar="SECONDS",
+                        help="time for one color cycle (default 8)")
+    parser.add_argument("--leaves", choices=LEAVES, default="classic")
+    parser.add_argument("--no-pot", action="store_true", help="hide the planter")
+    parser.add_argument("--dirt", action="store_true",
+                        help="replace the planter with three full-width rows of soil")
+    parser.add_argument("--wait", type=float, default=4, metavar="SECONDS",
+                        help="hold each finished tree in infinite mode (default 4)")
+    args = parser.parse_args()
+    if not math.isfinite(args.cycle) or args.cycle < 0.1:
+        parser.error("--cycle must be at least 0.1 seconds and finite")
+    if not math.isfinite(args.wait) or args.wait < 0:
+        parser.error("--wait must be nonnegative and finite")
+    return args
+
+
+def make_tree(cols, rows, args, seed):
+    """Return the pot and successive brush strokes in terminal-cell coordinates."""
+    rng = random.Random(seed)
+    width, height = cols - 2, rows - 1
+    if not args.huge:
+        width = min(width, 90 if args.large else 50)
+        height = min(height, 35 if args.large else 20)
+    # Leave breathing room in extreme aspect ratios, and keep the pot grounded.
+    width = min(width, height * 5)
+    height = min(height, max(8, width // 2))
+    left, top = (cols - width) // 2, rows - height - 1
+    base_height = 3 if args.dirt or not args.no_pot else 0
+    wood_rows = height - base_height
+    if args.dirt:
+        top += 1  # Anchor the trunk just above the soil on the last three rows.
+    pot_width = max(9, int(width * 0.34)) | 1
+    pot_x = left + (width - pot_width) // 2
+    pot = []
+    if base_height and not args.dirt:
+        for i, line in enumerate(("╭" + "─" * (pot_width - 2) + "╮",
+                                  " ╲" + "▁" * (pot_width - 4) + "╱",
+                                  "  ▔" + " " * (pot_width - 6) + "▔")):
+            pot.extend((pot_x + j, top + wood_rows + i, char, 0)
+                       for j, char in enumerate(line) if char != " ")
+
+    frames, dots = [], {}
+    mirror = rng.choice((-1, 1))
+
+    def point(x, y):
+        x = 0.5 + mirror * (x - 0.5)
+        return x * (2 * width - 1), y * (4 * wood_rows - 1)
+
+    def stroke(start, control, end, r0, r1):
+        a, b, c = (point(*p) for p in (start, control, end))
+        length = math.dist(a, b) + math.dist(b, c)
+        count = max(1, math.ceil(length))
+        frame = {}
+        for i in range(count + 1):
+            t = i / count
+            u = 1 - t
+            x = u*u*a[0] + 2*u*t*b[0] + t*t*c[0]
+            y = u*u*a[1] + 2*u*t*b[1] + t*t*c[1]
+            radius = max(0.76, (r0*u + r1*t) * min(width * 2, wood_rows * 4))
+            for dy in range(math.ceil(y-radius), math.floor(y+radius)+1):
+                if not 0 <= dy < 4 * wood_rows:
+                    continue
+                span = math.sqrt(max(0, radius**2 - (dy-y)**2))
+                for dx in range(max(0, math.ceil(x-span)), min(2*width-1, math.floor(x+span))+1):
+                    cell = (dx // 2, dy // 4)
+                    old = dots.get(cell, 0)
+                    mask = old | DOTS[dy % 4][dx % 2]
+                    if mask != old:
+                        dots[cell] = mask
+                        frame[cell] = (left + cell[0], top + cell[1], chr(0x2800 + mask), 1)
+            if i % 3 == 0 or i == count:
+                if frame:
+                    frames.append(list(frame.values()))
+                    frame.clear()
+
+    def foliage(cx, cy, half_width, depth):
+        # A gently domed crown with an uneven, nearly horizontal underside.
+        x, y = point(cx, cy)
+        cx, cy = x / 2, y / 4
+        rx = max(2, half_width * width)
+        ry = max(1.35, depth * wood_rows)
+        phase = rng.uniform(0, math.tau)
+        leaves = []
+        for col in range(max(0, math.ceil(cx-rx)), min(width-1, math.floor(cx+rx))+1):
+            side = (col-cx) / rx
+            dome = math.sqrt(max(0, 1-side*side))
+            edge = 0.84 + 0.16 * math.cos(side*7 + phase)
+            upper = cy - ry*dome*edge
+            lower = cy + ry*0.24*dome + 0.36 * math.sin(side*8 + phase)
+            for row in range(max(0, math.ceil(upper)), min(wood_rows-1, math.floor(lower))+1):
+                if row == math.ceil(upper) and rng.random() < 0.14 and row+1 <= lower:
+                    continue
+                tone = 2 if (row-upper)/(lower-upper+0.1) > 0.56 else 3
+                distance = abs(side) + (cy-row)/max(ry, 1) * 0.3 + rng.random()*0.2
+                leaves.append((distance, (left+col, top+row, LEAVES[args.leaves], tone)))
+        frames.extend([cell] for _, cell in sorted(leaves))
+
+    # Alternating boughs spring from actual points on the twisting main trunk.
+    nodes = [(0.50, 1.0), (0.45, 0.74), (0.56, 0.57), (0.49, 0.40),
+             (0.55, 0.26), (0.51, 0.105)]
+    nodes[1:] = [(x + rng.uniform(-0.035, 0.035), y + rng.uniform(-0.012, 0.012))
+                 for x, y in nodes[1:]]
+    controls = [(0.51, 0.83), (0.44, 0.66), (0.60, 0.49),
+                (0.46, 0.33), (0.57, 0.18)]
+    radii = (0.037, 0.026, 0.023, 0.016, 0.013, 0.005)
+    pads = [(0.205, 0.64, 0.193, 0.13), (0.817, 0.49, 0.171, 0.14),
+            (0.275, 0.335, 0.169, 0.11), (0.705, 0.22, 0.136, 0.095),
+            (0.515, 0.107, 0.146, 0.098)]
+    for i, (cx, cy, spread, depth) in enumerate(pads):
+        node = nodes[i+1]
+        stroke(nodes[i], controls[i], node, radii[i], radii[i+1])
+        cx += rng.uniform(-0.01, 0.01)
+        cy += rng.uniform(-0.018, 0.018)
+        spread *= rng.uniform(0.94, 1.03)
+        fork = ((node[0]+2*cx)/3, cy+depth*0.35)
+        stroke(node, (fork[0], node[1]+0.025), fork, radii[i+1]*0.75, 0.008)
+        for side in (-0.70, 0, 0.68):
+            tip = (cx + spread*side, cy-depth*0.12)
+            stroke(fork, (tip[0], fork[1]+0.02), tip, 0.008, 0.003)
+        foliage(cx, cy, spread, depth)
+    return pot, frames
+
+
+def palette(args, elapsed):
+    phase = (elapsed % args.cycle) / args.cycle
+    result = []
+    tones = ((0, 0.22, 0.76), (0.03, 0.59, 0.94),
+             (0.21, 0.78, 0.83), (0.30, 0.72, 1.0))
+    for i, (offset, saturation, light) in enumerate(tones):
+        hue = (phase + offset) % 1
+        if THEMES[args.theme]:
+            middle, span = THEMES[args.theme]
+            hue = (middle + span * math.sin(math.tau*hue)) % 1
+        rgb = colorsys.hsv_to_rgb(hue, saturation, light)
+        color = "".join(f"{round(v*255):02x}" for v in rgb)
+        result.append(f"{200+i};#{color}")
+    return "\x1b]4;" + ";".join(result) + "\x1b\\"
+
+
+def paint(cells):
+    return "".join(f"\x1b[{y+1};{x+1}H\x1b[38;5;{200+tone}m{char}"
+                   for x, y, char, tone in cells)
+
+
+def soil(cols, rows, seed):
+    rng = random.Random(seed)
+    bands = []
+    for depth, (background, flecks) in enumerate(((94, 180), (52, 137), (52, 95))):
+        texture = "".join(rng.choice("     ·.,") for _ in range(cols))
+        bands.append(f"\x1b[{rows-2+depth};1H\x1b[48;5;{background};38;5;{flecks}m{texture}")
+    return "".join(bands) + "\x1b[0m\x1b[H"
+
+
+def animate(args):
+    seeds = random.Random(args.seed)
+    seed = seeds.getrandbits(64)
+    size = None
+    frames = []
+    index = 0
+    finished = None
+    start = next_step = next_color = time.monotonic()
+    while True:
+        now = time.monotonic()
+        current = os.get_terminal_size(sys.stdout.fileno())
+        if size != current:
+            progress = index / len(frames) if frames else 0
+            size = current
+            sys.stdout.write("\x1b[2J\x1b[H")
+            if size.columns >= 16 and size.lines >= 8:
+                pot, frames = make_tree(*size, args, seed)
+                index = round(progress * len(frames))
+                if args.dirt:
+                    sys.stdout.write(soil(*size, seed))
+                sys.stdout.write(paint(pot))
+                for frame in frames[:index]:
+                    sys.stdout.write(paint(frame))
+            else:
+                sys.stdout.write("Enlarge window"[:max(0, size.columns-1)])
+        if size.columns >= 16 and size.lines >= 8:
+            if index < len(frames) and now >= next_step:
+                sys.stdout.write(paint(frames[index]))
+                index += 1
+                next_step = now + STEP
+            if index == len(frames):
+                if finished is None:
+                    finished = now
+                if args.infinite and now-finished >= args.wait:
+                    seed = seeds.getrandbits(64)
+                    size, frames, index, finished = None, [], 0, None
+        if now >= next_color:
+            sys.stdout.write(palette(args, now-start))
+            next_color = now + 0.08
+        sys.stdout.flush()
+        deadline = next_color
+        if size and size.lines >= 8 and size.columns >= 16 and index < len(frames):
+            deadline = min(deadline, next_step)
+        if select.select([sys.stdin], [], [], max(0, deadline-time.monotonic()))[0]:
+            os.read(sys.stdin.fileno(), 1)
+            return
+
+
+def main():
+    args = options()
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise SystemExit("Run this in a Ghostty terminal window.")
+    settings = termios.tcgetattr(sys.stdin)
+    try:
+        tty.setcbreak(sys.stdin.fileno())
+        sys.stdout.write("\x1b[?1049h\x1b[?25l")
+        animate(args)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSANOW, settings)
+        sys.stdout.write("\x1b[0m\x1b]104;200;201;202;203\x1b\\\x1b[?25h\x1b[?1049l")
+        sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()
