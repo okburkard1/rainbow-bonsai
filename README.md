@@ -27,6 +27,8 @@ If your shell doesn't already search that directory, add `export PATH="$HOME/.lo
 
 ## Try it
 
+Run `rainbow-bonsai -help` to see every option.
+
 ```sh
 rainbow-bonsai --huge --dirt --infinite
 ```

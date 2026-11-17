@@ -2,6 +2,10 @@ import fcntl, os, pty, re, runpy, select, struct, subprocess, sys, termios, time
 from types import SimpleNamespace
 
 entry = sys.argv[1]
+help_text = subprocess.check_output([entry, "--help"])
+assert b"-help" in help_text and b"--huge" in help_text
+for flag in ("-h", "-help"):
+    assert subprocess.check_output([entry, flag]) == help_text
 module = runpy.run_path(entry)
 for cols, rows in [(16,8),(80,24),(150,52),(220,100),(300,12),(20,80)]:
     args = SimpleNamespace(huge=True,large=False,no_pot=False,dirt=False,leaves='classic')

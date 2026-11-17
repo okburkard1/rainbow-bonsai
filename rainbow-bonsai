@@ -20,7 +20,8 @@ DOTS = ((1, 8), (2, 16), (4, 32), (64, 128))
 
 
 def options():
-    parser = argparse.ArgumentParser(prog="rainbow-bonsai", description=__doc__)
+    parser = argparse.ArgumentParser(prog="rainbow-bonsai", description=__doc__, add_help=False)
+    parser.add_argument("-h", "-help", "--help", action="help", help="show all options and exit")
     sizes = parser.add_mutually_exclusive_group()
     sizes.add_argument("--large", action="store_true", help="grow a larger bonsai")
     sizes.add_argument("--huge", action="store_true", help="fit the tree to the terminal")
